@@ -1,5 +1,5 @@
 #     rivets.js
-#     version : 0.4.9
+#     version : 0.4.5
 #     author : Michael Richards
 #     license : MIT
 
@@ -40,8 +40,6 @@ class Rivets.Binding
 
       formatter = if @model[id] instanceof Function
         @model[id]
-      else if @options?.bindingOptions?.formatters?[id] instanceof Function
-        @options.bindingOptions.formatters[id]
       else
         Rivets.formatters[id]
 
@@ -55,11 +53,8 @@ class Rivets.Binding
   # Sets the value for the binding. This Basically just runs the binding routine
   # with the suplied value formatted.
   set: (value) =>
-    deps = @options.dependencies?.map (d) =>
-      path = d.split('.').reverse()
-      Rivets.config.adapter.read @options.models[path.pop()], path.join('.')
     value = if value instanceof Function and !@binder.function
-      @formattedValue value.apply @model, deps || []
+      @formattedValue value.call @model
     else
       @formattedValue value
 
@@ -73,7 +68,7 @@ class Rivets.Binding
       Rivets.config.adapter.read @model, @keypath
 
   # Publishes the value currently set on the input element back to the model.
-  publish: =>
+  publish: => 
     value = getInputValue @el
 
     for formatter in @formatters.slice(0).reverse()
@@ -132,7 +127,7 @@ class Rivets.Binding
 class Rivets.View
   # The DOM elements and the model objects for binding are passed into the
   # constructor.
-  constructor: (@els, @models, @options) ->
+  constructor: (@els, @models) ->
     @els = [@els] unless (@els.jquery || @els instanceof Array)
     @build()
 
@@ -171,15 +166,11 @@ class Rivets.View
           if bindingRegExp.test attribute.name
             options = {}
 
-            if @options? and typeof @options is 'object'
-                options.bindingOptions = @options
-
             type = attribute.name.replace bindingRegExp, ''
             pipes = (pipe.trim() for pipe in attribute.value.split '|')
             context = (ctx.trim() for ctx in pipes.shift().split '<')
             path = context.shift()
             splitPath = path.split /\.|:/
-            options.models = @models
             options.formatters = pipes
             options.bypass = path.indexOf(':') != -1
             if splitPath[0]
@@ -260,19 +251,12 @@ unbindEvent = (el, event, fn) ->
     event = 'on' + event
     el.detachEvent  event, fn
 
-# Cross-browser input value getter.
+# Returns the current input value for the specified element.
 getInputValue = (el) ->
-  if window.jQuery?
-    el = jQuery el
-
-    switch el[0].type
-      when 'checkbox' then el.is ':checked'
-      else el.val()
-  else
-    switch el.type
-      when 'checkbox' then el.checked
-      when 'select-multiple' then o.value for o in el when o.selected
-      else el.value
+  switch el.type
+    when 'checkbox' then el.checked
+    when 'select-multiple' then o.value for o in el when o.selected
+    else el.value
 
 # Core binding routines.
 Rivets.binders =
@@ -290,7 +274,7 @@ Rivets.binders =
       unbindEvent el, 'change', @currentListener
     routine: (el, value) ->
       if el.type is 'radio'
-        el.checked = el.value?.toString() is value?.toString()
+        el.checked = el.value is value
       else
         el.checked = !!value
 
@@ -302,7 +286,7 @@ Rivets.binders =
       unbindEvent el, 'change', @currentListener
     routine: (el, value) ->
       if el.type is 'radio'
-        el.checked = el.value?.toString() isnt value?.toString()
+        el.checked = el.value isnt value
       else
         el.checked = !value
 
@@ -322,16 +306,10 @@ Rivets.binders =
     unbind: (el) ->
       unbindEvent el, 'change', @currentListener
     routine: (el, value) ->
-      if window.jQuery?
-        el = jQuery el
-
-        if value?.toString() isnt el.val()?.toString()
-          el.val if value? then value else ''
-      else
-        if el.type is 'select-multiple'
-          o.selected = o.value in value for o in el if value?
-        else if value?.toString() isnt el.value?.toString()
-          el.value = if value? then value else ''
+      if el.type is 'select-multiple'
+        o.selected = o.value in value for o in el if value?
+      else if value?.toString() isnt el.value?.toString()
+        el.value = if value? then value else ''
 
   text: (el, value) ->
     if el.innerText?
@@ -348,7 +326,7 @@ Rivets.binders =
   "each-*":
     block: true
     bind: (el, collection) ->
-      el.removeAttribute ['data', Rivets.config.prefix, @type].join('-').replace '--', '-'
+      el.removeAttribute ['data', rivets.config.prefix, @type].join('-').replace '--', '-'
     routine: (el, collection) ->
       if @iterated?
         for view in @iterated
@@ -367,17 +345,12 @@ Rivets.binders =
           data[n] = m for n, m of @view.models
           data[@args[0]] = item
           itemEl = el.cloneNode true
-
-          previous = if @iterated.length
-            @iterated[@iterated.length - 1].els[0]
+          if @iterated.length > 0
+            previous = @iterated[@iterated.length - 1].els[0]
           else
-            @marker
-
+            previous = @marker
           @marker.parentNode.insertBefore itemEl, previous.nextSibling ? null
-          @options.models['this'] = data['this']
-          view = new Rivets.View(itemEl, data, @options)
-          view.bind()
-          @iterated.push view
+          @iterated.push rivets.bind itemEl, data
 
   "class-*": (el, value) ->
     elClass = " #{el.className} "
@@ -402,36 +375,32 @@ Rivets.config =
 Rivets.formatters = {}
 
 # The rivets module. This is the public interface that gets exported.
-factory = (exports) ->
+rivets =
   # Exposes the core binding routines that can be extended or stripped down.
-  exports.binders = Rivets.binders
+  binders: Rivets.binders
 
   # Exposes the formatters object to be extended.
-  exports.formatters = Rivets.formatters
+  formatters: Rivets.formatters
 
   # Exposes the rivets configuration options. These can be set manually or from
   # rivets.configure with an object literal.
-  exports.config = Rivets.config
+  config: Rivets.config
 
   # Sets configuration options by merging an object literal.
-  exports.configure = (options={}) ->
+  configure: (options={}) ->
     for property, value of options
       Rivets.config[property] = value
     return
 
   # Binds a set of model objects to a parent DOM element. Returns a Rivets.View
   # instance.
-  exports.bind = (el, models = {}, options = {}) ->
-    view = new Rivets.View(el, models, options)
+  bind: (el, models = {}) ->
+    view = new Rivets.View(el, models)
     view.bind()
     view
 
-# Exports rivets for CommonJS, AMD and the browser.
-if typeof exports == 'object'
-  factory(exports)
-else if typeof define == 'function' && define.amd
-  define ['exports'], (exports) ->
-    factory(@rivets = exports)
-    return exports
+# Exports rivets for both CommonJS and the browser.
+if module?
+  module.exports = rivets
 else
-  factory(@rivets = {})
+  @rivets = rivets
